@@ -6,6 +6,9 @@ func (p *Parser) parseDocElement() (INode, *Error) {
 
 	switch t.Typ {
 	case TokenHTML:
+		if p.template.Options.TrimWhitespace {
+			t.Val, p.htmlInQuote, p.htmlLastChar = stripWhitespace(t.Val, p.htmlInQuote, p.htmlLastChar)
+		}
 		n := &nodeHTML{token: t}
 		left := p.PeekTypeN(-1, TokenSymbol)
 		right := p.PeekTypeN(1, TokenSymbol)

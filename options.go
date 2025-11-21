@@ -8,12 +8,17 @@ type Options struct {
 
 	// If this is set to true leading spaces and tabs are stripped from the start of a line to a block. Defaults to false
 	LStripBlocks bool
+
+	// If this is set to true, all unnecessary whitespace is stripped from the template.
+	// This includes whitespace between tags and whitespace in HTML tags, but preserves whitespace inside attribute values.
+	TrimWhitespace bool
 }
 
 func newOptions() *Options {
 	return &Options{
-		TrimBlocks:   false,
-		LStripBlocks: false,
+		TrimBlocks:     false,
+		LStripBlocks:   false,
+		TrimWhitespace: false,
 	}
 }
 
@@ -21,6 +26,7 @@ func newOptions() *Options {
 func (opt *Options) Update(other *Options) *Options {
 	opt.TrimBlocks = other.TrimBlocks
 	opt.LStripBlocks = other.LStripBlocks
+	opt.TrimWhitespace = other.TrimWhitespace
 
 	return opt
 }

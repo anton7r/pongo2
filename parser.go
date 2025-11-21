@@ -35,6 +35,10 @@ type Parser struct {
 	// if the parser parses a template document, here will be
 	// a reference to it (needed to access the template through Tags)
 	template *Template
+
+	// For TrimWhitespace option
+	htmlInQuote  rune
+	htmlLastChar rune
 }
 
 // Creates a new parser to parse tokens.
