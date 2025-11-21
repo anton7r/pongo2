@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"reflect"
 	"strings"
 	"sync"
 
@@ -102,28 +101,44 @@ func (tw *templateWriter) WriteAny(v *Value) (int, error) {
 		return 0, nil
 	}
 
-	// Check if the value implements fmt.Stringer
-	if t, ok := v.Interface().(fmt.Stringer); ok {
-		return fastprinter.PrintString(tw.w, t.String())
-	}
-
 	// Use fastprinter's optimized functions for basic types
-	switch v.getResolvedValue().Kind() {
-	case reflect.String:
-		return fastprinter.PrintString(tw.w, v.getResolvedValue().String())
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return fastprinter.PrintInt(tw.w, v.getResolvedValue().Int())
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return fastprinter.PrintUint(tw.w, v.getResolvedValue().Uint())
-	case reflect.Float32, reflect.Float64:
+	// Use type switch on resolved value to avoid reflection
+	switch val := v.getResolvedValue().(type) {
+	case string:
+		return fastprinter.PrintString(tw.w, val)
+	case int:
+		return fastprinter.PrintInt(tw.w, int64(val))
+	case int8:
+		return fastprinter.PrintInt(tw.w, int64(val))
+	case int16:
+		return fastprinter.PrintInt(tw.w, int64(val))
+	case int32:
+		return fastprinter.PrintInt(tw.w, int64(val))
+	case int64:
+		return fastprinter.PrintInt(tw.w, val)
+	case uint:
+		return fastprinter.PrintUint(tw.w, uint64(val))
+	case uint8:
+		return fastprinter.PrintUint(tw.w, uint64(val))
+	case uint16:
+		return fastprinter.PrintUint(tw.w, uint64(val))
+	case uint32:
+		return fastprinter.PrintUint(tw.w, uint64(val))
+	case uint64:
+		return fastprinter.PrintUint(tw.w, val)
+	case float32:
 		// Use 6 decimal places to match fmt.Sprintf("%f", ...) behavior
-		return fastprinter.PrintFloatPrecision(tw.w, v.getResolvedValue().Float(), 6)
-	case reflect.Bool:
+		return fastprinter.PrintFloatPrecision(tw.w, float64(val), 6)
+	case float64:
+		return fastprinter.PrintFloatPrecision(tw.w, val, 6)
+	case bool:
 		// Match pongo2's capitalized boolean format (True/False)
-		if v.getResolvedValue().Bool() {
+		if val {
 			return fastprinter.PrintString(tw.w, "True")
 		}
 		return fastprinter.PrintString(tw.w, "False")
+	case fmt.Stringer:
+		return fastprinter.PrintString(tw.w, val.String())
 	default:
 		// Fall back to String() method for unsupported types
 		return fastprinter.PrintString(tw.w, v.String())
