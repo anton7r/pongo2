@@ -1,5 +1,7 @@
 package pongo2
 
+//go:generate go run github.com/anton7r/bomlok/cmd/bomlok -include=. -exclude=template_tests -exclude=testdata
+
 // Version string
 const Version = "6.0.0"
 

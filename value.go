@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/anton7r/bomlok"
 )
 
 type Value struct {
@@ -538,6 +540,12 @@ func (v *Value) Contains(other *Value) bool {
 	rv := reflect.ValueOf(baseValue)
 	switch rv.Kind() {
 	case reflect.Struct:
+		// Try to use Bomlok interface for faster field access
+		if bomlokValue, ok := baseValue.(bomlok.Bomlok); ok {
+			value := bomlokValue.Bomlok_GetValue(other.String())
+			return value != nil
+		}
+		// Fallback to reflection
 		fieldValue := rv.FieldByName(other.String())
 		return fieldValue.IsValid()
 	case reflect.Map:
