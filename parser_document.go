@@ -6,6 +6,9 @@ func (p *Parser) parseDocElement() (INode, *Error) {
 
 	switch t.Typ {
 	case TokenHTML:
+		if p.template.Options.TrimWhitespace {
+			t.Val, p.htmlInQuote, p.htmlLastChar = stripWhitespace(t.Val, p.htmlInQuote, p.htmlLastChar)
+		}
 		n := &nodeHTML{token: t}
 		left := p.PeekTypeN(-1, TokenSymbol)
 		right := p.PeekTypeN(1, TokenSymbol)
@@ -17,6 +20,14 @@ func (p *Parser) parseDocElement() (INode, *Error) {
 		switch t.Val {
 		case "{{":
 			// parse variable
+			if p.template.Options.TrimWhitespace {
+				// We don't reset lastChar here anymore, as we want to preserve context across variables
+				// But we might want to ensure we don't accidentally strip space if the variable is the first thing?
+				// Actually, stripWhitespace handles the logic.
+				// If we had `foo {{`, stripWhitespace for `foo ` would have kept the space (lastChar='o').
+				// If we had `> {{`, stripWhitespace for `> ` would have stripped it (lastChar='>').
+				// So we don't need to do anything here.
+			}
 			variable, err := p.parseVariableElement()
 			if err != nil {
 				return nil, err
