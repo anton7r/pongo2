@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/anton7r/bomlok"
 )
 
 const (
@@ -245,6 +247,31 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 	var current reflect.Value
 	var isSafe bool
 
+	// Fast path: Check if we can use bomlok for simple field access
+	// This avoids creating reflect.Value objects for common cases
+	if len(vr.parts) == 2 && vr.parts[0].typ == varTypeIdent && vr.parts[1].typ == varTypeIdent {
+		// Simple case: obj.field
+		val, inPrivate := ctx.Private[vr.parts[0].s]
+		if !inPrivate {
+			val = ctx.Public[vr.parts[0].s]
+		}
+		if val != nil {
+			// If val is a *Value (common in loops), unwrap it
+			if valuePtr, ok := val.(*Value); ok {
+				val = valuePtr.val
+				isSafe = valuePtr.safe
+			}
+
+			if bomlokValue, ok := val.(bomlok.Bomlok); ok {
+				fieldValue := bomlokValue.Bomlok_GetValue(vr.parts[1].s)
+				if fieldValue != nil {
+					return &Value{val: fieldValue, safe: isSafe}, nil
+				}
+				// Field not found, continue with normal path
+			}
+		}
+	}
+
 	// we are resolving an in-template array definition
 	if len(vr.parts) > 0 && vr.parts[0].typ == varTypeArray {
 		items := make([]*Value, 0)
@@ -324,7 +351,25 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 					// Calling a field or key
 					switch current.Kind() {
 					case reflect.Struct:
-						current = current.FieldByName(part.s)
+						// Try to use Bomlok interface for faster field access
+						// Check the actual interface value before FieldByName
+						if currentInterface := current.Interface(); currentInterface != nil {
+							if bomlokValue, ok := currentInterface.(bomlok.Bomlok); ok {
+								value := bomlokValue.Bomlok_GetValue(part.s)
+								if value != nil {
+									current = reflect.ValueOf(value)
+								} else {
+									// Field not found, return invalid value
+									current = reflect.Value{}
+								}
+							} else {
+								// Fallback to reflection
+								current = current.FieldByName(part.s)
+							}
+						} else {
+							// Fallback to reflection
+							current = current.FieldByName(part.s)
+						}
 					case reflect.Map:
 						current = current.MapIndex(reflect.ValueOf(part.s))
 					default:
@@ -353,7 +398,24 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 						if err != nil {
 							return nil, err
 						}
-						current = current.FieldByName(sv.String())
+						// Try to use Bomlok interface for faster field access
+						if currentInterface := current.Interface(); currentInterface != nil {
+							if bomlokValue, ok := currentInterface.(bomlok.Bomlok); ok {
+								value := bomlokValue.Bomlok_GetValue(sv.String())
+								if value != nil {
+									current = reflect.ValueOf(value)
+								} else {
+									// Field not found, return invalid value
+									current = reflect.Value{}
+								}
+							} else {
+								// Fallback to reflection
+								current = current.FieldByName(sv.String())
+							}
+						} else {
+							// Fallback to reflection
+							current = current.FieldByName(sv.String())
+						}
 					case reflect.Map:
 						sv, err := part.subscript.Evaluate(ctx)
 						if err != nil {
