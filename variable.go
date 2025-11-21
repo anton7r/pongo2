@@ -362,8 +362,9 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 						if sv.IsNil() {
 							return AsValue(nil), nil
 						}
-						if sv.val.Type().AssignableTo(current.Type().Key()) {
-							current = current.MapIndex(sv.val)
+						svRV := reflect.ValueOf(sv.val)
+						if svRV.IsValid() && svRV.Type().AssignableTo(current.Type().Key()) {
+							current = current.MapIndex(svRV)
 						} else {
 							return AsValue(nil), nil
 						}
@@ -387,7 +388,7 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 		// into the execution context (e.g. in a for-loop)
 		if current.Type() == typeOfValuePtr {
 			tmpValue := current.Interface().(*Value)
-			current = tmpValue.val
+			current = reflect.ValueOf(tmpValue.val)
 			isSafe = tmpValue.safe
 		}
 
@@ -502,8 +503,9 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 				current = reflect.ValueOf(rv.Interface())
 			} else {
 				// Return the function call value
-				current = rv.Interface().(*Value).val
-				isSafe = rv.Interface().(*Value).safe
+				valuePtr := rv.Interface().(*Value)
+				current = reflect.ValueOf(valuePtr.val)
+				isSafe = valuePtr.safe
 			}
 		}
 
@@ -513,7 +515,10 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 		}
 	}
 
-	return &Value{val: current, safe: isSafe}, nil
+	if !current.IsValid() {
+		return AsValue(nil), nil
+	}
+	return &Value{val: current.Interface(), safe: isSafe}, nil
 }
 
 func (vr *variableResolver) Evaluate(ctx *ExecutionContext) (*Value, *Error) {
