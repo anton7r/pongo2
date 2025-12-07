@@ -16,17 +16,20 @@ func (node *tagIfchangedNode) Execute(ctx *ExecutionContext, writer TemplateWrit
 	if len(node.watchedExpr) == 0 {
 		// Check against own rendered body
 
-		buf := bytes.NewBuffer(make([]byte, 0, 1024)) // 1 KiB
-		err := node.thenWrapper.Execute(ctx, buf)
+		btw := getBufferedTemplateWriter()
+		defer putBufferedTemplateWriter(btw)
+		err := node.thenWrapper.Execute(ctx, btw.tw)
 		if err != nil {
 			return err
 		}
 
-		bufBytes := buf.Bytes()
+		bufBytes := btw.buf.Bytes()
 		if !bytes.Equal(node.lastContent, bufBytes) {
 			// Rendered content changed, output it
 			writer.Write(bufBytes)
-			node.lastContent = bufBytes
+			// Make a copy since we're returning the buffer to the pool
+			node.lastContent = make([]byte, len(bufBytes))
+			copy(node.lastContent, bufBytes)
 		}
 	} else {
 		nowValues := make([]*Value, 0, len(node.watchedExpr))

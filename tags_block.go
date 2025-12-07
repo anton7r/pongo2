@@ -1,7 +1,6 @@
 package pongo2
 
 import (
-	"bytes"
 	"fmt"
 )
 
@@ -70,12 +69,13 @@ func (t tagBlockInformation) Super() (*Value, error) {
 	}
 
 	blockWrapper := t.wrappers[lenWrappers-1]
-	buf := bytes.NewBufferString("")
-	err := blockWrapper.Execute(superCtx, &templateWriter{buf})
+	btw := getBufferedTemplateWriter()
+	defer putBufferedTemplateWriter(btw)
+	err := blockWrapper.Execute(superCtx, btw.tw)
 	if err != nil {
 		return AsSafeValue(""), err
 	}
-	return AsSafeValue(buf.String()), nil
+	return AsSafeValue(btw.buf.String()), nil
 }
 
 func tagBlockParser(doc *Parser, start *Token, arguments *Parser) (INodeTag, *Error) {

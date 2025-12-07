@@ -1,7 +1,6 @@
 package pongo2
 
 import (
-	"bytes"
 	"unicode"
 )
 
@@ -20,7 +19,8 @@ func min(a, b int) int {
 }
 
 func stripWhitespace(s string, inQuote rune, lastChar rune) (string, rune, rune) {
-	var buf bytes.Buffer
+	buf := getBuffer()
+	defer putBuffer(buf)
 	pendingSpace := false
 
 	for _, r := range s {

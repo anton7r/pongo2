@@ -97,7 +97,7 @@ func (v *nodeFilteredVariable) Execute(ctx *ExecutionContext, writer TemplateWri
 	if err != nil {
 		return err
 	}
-	writer.WriteString(value.String())
+	writer.WriteAny(value)
 	return nil
 }
 
@@ -106,7 +106,7 @@ func (vr *variableResolver) Execute(ctx *ExecutionContext, writer TemplateWriter
 	if err != nil {
 		return err
 	}
-	writer.WriteString(value.String())
+	writer.WriteAny(value)
 	return nil
 }
 
@@ -115,7 +115,7 @@ func (s *stringResolver) Execute(ctx *ExecutionContext, writer TemplateWriter) *
 	if err != nil {
 		return err
 	}
-	writer.WriteString(value.String())
+	writer.WriteAny(value)
 	return nil
 }
 
@@ -124,7 +124,7 @@ func (i *intResolver) Execute(ctx *ExecutionContext, writer TemplateWriter) *Err
 	if err != nil {
 		return err
 	}
-	writer.WriteString(value.String())
+	writer.WriteAny(value)
 	return nil
 }
 
@@ -133,7 +133,7 @@ func (f *floatResolver) Execute(ctx *ExecutionContext, writer TemplateWriter) *E
 	if err != nil {
 		return err
 	}
-	writer.WriteString(value.String())
+	writer.WriteAny(value)
 	return nil
 }
 
@@ -142,7 +142,7 @@ func (b *boolResolver) Execute(ctx *ExecutionContext, writer TemplateWriter) *Er
 	if err != nil {
 		return err
 	}
-	writer.WriteString(value.String())
+	writer.WriteAny(value)
 	return nil
 }
 
@@ -220,7 +220,7 @@ func (nv *nodeVariable) Execute(ctx *ExecutionContext, writer TemplateWriter) *E
 		}
 	}
 
-	writer.WriteString(value.String())
+	writer.WriteAny(value)
 	return nil
 }
 

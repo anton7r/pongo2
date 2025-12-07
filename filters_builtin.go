@@ -228,7 +228,8 @@ func filterTruncatecharsHTML(in *Value, param *Value) (*Value, *Error) {
 	value := in.String()
 	newLen := max(param.Integer()-3, 0)
 
-	newOutput := bytes.NewBuffer(nil)
+	newOutput := getBuffer()
+	defer putBuffer(newOutput)
 
 	textcounter := 0
 
@@ -271,7 +272,8 @@ func filterTruncatewordsHTML(in *Value, param *Value) (*Value, *Error) {
 	value := in.String()
 	newLen := max(param.Integer(), 0)
 
-	newOutput := bytes.NewBuffer(nil)
+	newOutput := getBuffer()
+	defer putBuffer(newOutput)
 
 	wordcounter := 0
 
@@ -334,7 +336,8 @@ func filterSafe(in *Value, param *Value) (*Value, *Error) {
 func filterEscapejs(in *Value, param *Value) (*Value, *Error) {
 	sin := in.String()
 
-	var b bytes.Buffer
+	b := getBuffer()
+	defer putBuffer(b)
 
 	idx := 0
 	for idx < len(sin) {
@@ -490,7 +493,8 @@ func filterGetdigit(in *Value, param *Value) (*Value, *Error) {
 const filterIRIChars = "/#%[]=:;$&()+,!?*@'~"
 
 func filterIriencode(in *Value, param *Value) (*Value, *Error) {
-	var b bytes.Buffer
+	b := getBuffer()
+	defer putBuffer(b)
 
 	sin := in.String()
 	for _, r := range sin {
@@ -614,7 +618,8 @@ func filterLinebreaks(in *Value, param *Value) (*Value, *Error) {
 		return in, nil
 	}
 
-	var b bytes.Buffer
+	b := getBuffer()
+	defer putBuffer(b)
 
 	// Newline = <br />
 	// Double newline = <p>...</p>

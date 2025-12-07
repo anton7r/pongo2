@@ -4,12 +4,85 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
+	"sync"
+
+	"github.com/CloudyKit/fastprinter"
 )
+
+// bufferPool provides a pool of bytes.Buffer instances to reduce allocations
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return bytes.NewBuffer(make([]byte, 0, 1024))
+	},
+}
+
+// getBuffer retrieves a buffer from the pool
+func getBuffer() *bytes.Buffer {
+	return bufferPool.Get().(*bytes.Buffer)
+}
+
+// putBuffer returns a buffer to the pool after resetting it
+func putBuffer(buf *bytes.Buffer) {
+	buf.Reset()
+	bufferPool.Put(buf)
+}
+
+// templateWriterPool provides a pool of templateWriter instances to reduce allocations
+var templateWriterPool = sync.Pool{
+	New: func() interface{} {
+		return &templateWriter{}
+	},
+}
+
+// getTemplateWriter retrieves a templateWriter from the pool and sets its writer
+func getTemplateWriter(w io.Writer) *templateWriter {
+	tw := templateWriterPool.Get().(*templateWriter)
+	tw.w = w
+	return tw
+}
+
+// putTemplateWriter returns a templateWriter to the pool after clearing its writer
+func putTemplateWriter(tw *templateWriter) {
+	tw.w = nil
+	templateWriterPool.Put(tw)
+}
+
+// bufferedTemplateWriterPool provides a pool of buffered templateWriter instances
+var bufferedTemplateWriterPool = sync.Pool{
+	New: func() interface{} {
+		return &bufferedTemplateWriter{
+			buf: bytes.NewBuffer(make([]byte, 0, 1024)),
+			tw:  &templateWriter{},
+		}
+	},
+}
+
+// bufferedTemplateWriter wraps a templateWriter with its own buffer
+type bufferedTemplateWriter struct {
+	buf *bytes.Buffer
+	tw  *templateWriter
+}
+
+// getBufferedTemplateWriter retrieves a buffered templateWriter from the pool
+func getBufferedTemplateWriter() *bufferedTemplateWriter {
+	btw := bufferedTemplateWriterPool.Get().(*bufferedTemplateWriter)
+	btw.tw.w = btw.buf
+	return btw
+}
+
+// putBufferedTemplateWriter returns a buffered templateWriter to the pool after resetting
+func putBufferedTemplateWriter(btw *bufferedTemplateWriter) {
+	btw.buf.Reset()
+	btw.tw.w = nil
+	bufferedTemplateWriterPool.Put(btw)
+}
 
 type TemplateWriter interface {
 	io.Writer
 	WriteString(string) (int, error)
+	WriteAny(*Value) (int, error)
 }
 
 type templateWriter struct {
@@ -17,11 +90,44 @@ type templateWriter struct {
 }
 
 func (tw *templateWriter) WriteString(s string) (int, error) {
-	return tw.w.Write([]byte(s))
+	return fastprinter.PrintString(tw.w, s)
 }
 
 func (tw *templateWriter) Write(b []byte) (int, error) {
 	return tw.w.Write(b)
+}
+
+func (tw *templateWriter) WriteAny(v *Value) (int, error) {
+	if v.IsNil() {
+		return 0, nil
+	}
+
+	// Check if the value implements fmt.Stringer
+	if t, ok := v.Interface().(fmt.Stringer); ok {
+		return fastprinter.PrintString(tw.w, t.String())
+	}
+
+	// Use fastprinter's optimized functions for basic types
+	switch v.getResolvedValue().Kind() {
+	case reflect.String:
+		return fastprinter.PrintString(tw.w, v.getResolvedValue().String())
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return fastprinter.PrintInt(tw.w, v.getResolvedValue().Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return fastprinter.PrintUint(tw.w, v.getResolvedValue().Uint())
+	case reflect.Float32, reflect.Float64:
+		// Use 6 decimal places to match fmt.Sprintf("%f", ...) behavior
+		return fastprinter.PrintFloatPrecision(tw.w, v.getResolvedValue().Float(), 6)
+	case reflect.Bool:
+		// Match pongo2's capitalized boolean format (True/False)
+		if v.getResolvedValue().Bool() {
+			return fastprinter.PrintString(tw.w, "True")
+		}
+		return fastprinter.PrintString(tw.w, "False")
+	default:
+		// Fall back to String() method for unsupported types
+		return fastprinter.PrintString(tw.w, v.String())
+	}
 }
 
 type Template struct {
@@ -178,17 +284,22 @@ func (tpl *Template) execute(context Context, writer TemplateWriter) error {
 }
 
 func (tpl *Template) newTemplateWriterAndExecute(context Context, writer io.Writer) error {
-	return tpl.execute(context, &templateWriter{w: writer})
+	tw := getTemplateWriter(writer)
+	defer putTemplateWriter(tw)
+	return tpl.execute(context, tw)
 }
 
 func (tpl *Template) newBufferAndExecute(context Context) (*bytes.Buffer, error) {
-	// Create output buffer
-	// We assume that the rendered template will be 30% larger
-	buffer := bytes.NewBuffer(make([]byte, 0, int(float64(tpl.size)*1.3)))
-	if err := tpl.execute(context, buffer); err != nil {
+	// Get buffered template writer from pool
+	btw := getBufferedTemplateWriter()
+	defer putBufferedTemplateWriter(btw)
+	if err := tpl.execute(context, btw.tw); err != nil {
 		return nil, err
 	}
-	return buffer, nil
+	// Return a copy of the buffer contents since we're returning it to the pool
+	result := getBuffer()
+	result.Write(btw.buf.Bytes())
+	return result, nil
 }
 
 // Executes the template with the given context and writes to writer (io.Writer)
@@ -199,6 +310,7 @@ func (tpl *Template) ExecuteWriter(context Context, writer io.Writer) error {
 	if err != nil {
 		return err
 	}
+	defer putBuffer(buf)
 	_, err = buf.WriteTo(writer)
 	if err != nil {
 		return err
@@ -222,7 +334,11 @@ func (tpl *Template) ExecuteBytes(context Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return buffer.Bytes(), nil
+	defer putBuffer(buffer)
+	// Make a copy since we're returning the buffer to the pool
+	result := make([]byte, buffer.Len())
+	copy(result, buffer.Bytes())
+	return result, nil
 }
 
 // Executes the template and returns the rendered template as a string
@@ -232,7 +348,7 @@ func (tpl *Template) Execute(context Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
+	defer putBuffer(buffer)
 	return buffer.String(), nil
 }
 
@@ -253,7 +369,7 @@ func (tpl *Template) ExecuteBlocks(context Context, blocks []string) (map[string
 	}
 
 	for _, t := range parents {
-		var buffer *bytes.Buffer
+		var btw *bufferedTemplateWriter
 		var ctx *ExecutionContext
 		var err error
 		for _, blockName := range blocks {
@@ -261,9 +377,9 @@ func (tpl *Template) ExecuteBlocks(context Context, blocks []string) (map[string
 				continue
 			}
 			if blockWrapper, ok := t.blocks[blockName]; ok {
-				// assign the buffer if we haven't done so
-				if buffer == nil {
-					buffer = bytes.NewBuffer(make([]byte, 0, int(float64(t.size)*1.3)))
+				// assign the buffered writer if we haven't done so
+				if btw == nil {
+					btw = getBufferedTemplateWriter()
 				}
 				// assign the context if we haven't done so
 				if ctx == nil {
@@ -272,13 +388,17 @@ func (tpl *Template) ExecuteBlocks(context Context, blocks []string) (map[string
 						return nil, err
 					}
 				}
-				bErr := blockWrapper.Execute(ctx, buffer)
+				bErr := blockWrapper.Execute(ctx, btw.tw)
 				if bErr != nil {
 					return nil, bErr
 				}
-				result[blockName] = buffer.String()
-				buffer.Reset()
+				result[blockName] = btw.buf.String()
+				btw.buf.Reset()
 			}
+		}
+		// Return buffered writer to pool if we used one
+		if btw != nil {
+			putBufferedTemplateWriter(btw)
 		}
 		// We have found all blocks
 		if len(blocks) == len(result) {

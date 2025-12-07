@@ -1,7 +1,6 @@
 package pongo2
 
 import (
-	"bytes"
 	"fmt"
 )
 
@@ -71,13 +70,14 @@ func (node *tagMacroNode) call(ctx *ExecutionContext, args ...*Value) (*Value, e
 		macroCtx.Private[node.argsOrder[idx]] = argValue.Interface()
 	}
 
-	var b bytes.Buffer
-	err := node.wrapper.Execute(macroCtx, &b)
+	btw := getBufferedTemplateWriter()
+	defer putBufferedTemplateWriter(btw)
+	err := node.wrapper.Execute(macroCtx, btw.tw)
 	if err != nil {
 		return AsSafeValue(""), err.updateFromTokenIfNeeded(ctx.template, node.position)
 	}
 
-	return AsSafeValue(b.String()), nil
+	return AsSafeValue(btw.buf.String()), nil
 }
 
 func tagMacroParser(doc *Parser, start *Token, arguments *Parser) (INodeTag, *Error) {

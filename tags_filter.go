@@ -1,9 +1,5 @@
 package pongo2
 
-import (
-	"bytes"
-)
-
 type nodeFilterCall struct {
 	name      string
 	paramExpr IEvaluator
@@ -16,14 +12,15 @@ type tagFilterNode struct {
 }
 
 func (node *tagFilterNode) Execute(ctx *ExecutionContext, writer TemplateWriter) *Error {
-	temp := bytes.NewBuffer(make([]byte, 0, 1024)) // 1 KiB size
+	btw := getBufferedTemplateWriter()
+	defer putBufferedTemplateWriter(btw)
 
-	err := node.bodyWrapper.Execute(ctx, temp)
+	err := node.bodyWrapper.Execute(ctx, btw.tw)
 	if err != nil {
 		return err
 	}
 
-	value := AsValue(temp.String())
+	value := AsValue(btw.buf.String())
 
 	for _, call := range node.filterChain {
 		var param *Value
@@ -41,7 +38,7 @@ func (node *tagFilterNode) Execute(ctx *ExecutionContext, writer TemplateWriter)
 		}
 	}
 
-	writer.WriteString(value.String())
+	writer.WriteAny(value)
 
 	return nil
 }

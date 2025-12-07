@@ -42,7 +42,7 @@ func (node *tagCycleNode) Execute(ctx *ExecutionContext, writer TemplateWriter) 
 		t.value = val
 
 		if !t.node.silent {
-			writer.WriteString(val.String())
+			writer.WriteAny(val)
 		}
 	} else {
 		// Regular call
