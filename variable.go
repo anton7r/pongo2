@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/anton7r/bomlok"
 )
 
 const (
@@ -243,6 +245,31 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 	var current any
 	var isSafe bool
 
+	// Fast path: Check if we can use bomlok for simple field access
+	// This avoids creating reflect.Value objects for common cases
+	if len(vr.parts) == 2 && vr.parts[0].typ == varTypeIdent && vr.parts[1].typ == varTypeIdent {
+		// Simple case: obj.field
+		val, inPrivate := ctx.Private[vr.parts[0].s]
+		if !inPrivate {
+			val = ctx.Public[vr.parts[0].s]
+		}
+		if val != nil {
+			// If val is a *Value (common in loops), unwrap it
+			if valuePtr, ok := val.(*Value); ok {
+				val = valuePtr.val
+				isSafe = valuePtr.safe
+			}
+
+			if bomlokValue, ok := val.(bomlok.Bomlok); ok {
+				fieldValue := bomlokValue.Bomlok_GetValue(vr.parts[1].s)
+				if fieldValue != nil {
+					return &Value{val: fieldValue, safe: isSafe}, nil
+				}
+				// Field not found, continue with normal path
+			}
+		}
+	}
+
 	// we are resolving an in-template array definition
 	if len(vr.parts) > 0 && vr.parts[0].typ == varTypeArray {
 		items := make([]*Value, 0)
@@ -340,13 +367,24 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 					// Calling a field or key
 					switch rv.Kind() {
 					case reflect.Struct:
-						// Use cached field lookup for better performance
-						if indices, ok := globalStructFieldCache.getFieldIndex(rv.Type(), part.s); ok {
-							rv = rv.FieldByIndex(indices)
-							current = rv.Interface()
+						// Try to use Bomlok interface for faster field access
+						if bomlokValue, ok := current.(bomlok.Bomlok); ok {
+							value := bomlokValue.Bomlok_GetValue(part.s)
+							if value != nil {
+								current = value
+							} else {
+								// Field not found
+								return AsValue(nil), nil
+							}
 						} else {
-							// Field not found
-							return AsValue(nil), nil
+							// Use cached field lookup for better performance
+							if indices, ok := globalStructFieldCache.getFieldIndex(rv.Type(), part.s); ok {
+								rv = rv.FieldByIndex(indices)
+								current = rv.Interface()
+							} else {
+								// Field not found
+								return AsValue(nil), nil
+							}
 						}
 					case reflect.Map:
 						rv = rv.MapIndex(reflect.ValueOf(part.s))
@@ -383,13 +421,24 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 							return nil, err
 						}
 						fieldName := sv.String()
-						// Use cached field lookup for better performance
-						if indices, ok := globalStructFieldCache.getFieldIndex(rv.Type(), fieldName); ok {
-							rv = rv.FieldByIndex(indices)
-							current = rv.Interface()
+						// Try to use Bomlok interface for faster field access
+						if bomlokValue, ok := current.(bomlok.Bomlok); ok {
+							value := bomlokValue.Bomlok_GetValue(fieldName)
+							if value != nil {
+								current = value
+							} else {
+								// Field not found
+								return AsValue(nil), nil
+							}
 						} else {
-							// Field not found
-							return AsValue(nil), nil
+							// Use cached field lookup for better performance
+							if indices, ok := globalStructFieldCache.getFieldIndex(rv.Type(), fieldName); ok {
+								rv = rv.FieldByIndex(indices)
+								current = rv.Interface()
+							} else {
+								// Field not found
+								return AsValue(nil), nil
+							}
 						}
 					case reflect.Map:
 						sv, err := part.subscript.Evaluate(ctx)
