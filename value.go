@@ -683,9 +683,51 @@ func (v *Value) IterateOrder(fn func(idx, count int, key, value *Value) bool, em
 		}
 		return // done
 	case reflect.Array, reflect.Slice:
-		var items valuesList
-
 		itemCount := rv.Len()
+
+		if itemCount == 0 {
+			empty()
+			return
+		}
+
+		// Fast path: no sorting needed, iterate directly without building slice
+		if !sorted && !reverse {
+			for i := 0; i < itemCount; i++ {
+				itemRV := rv.Index(i)
+				var itemVal any
+				if itemRV.IsValid() {
+					itemVal = itemRV.Interface()
+				}
+				itemV := acquireValue(itemVal, false)
+				continu := fn(i, itemCount, itemV, nil)
+				releaseValue(itemV)
+				if !continu {
+					return
+				}
+			}
+			return
+		}
+
+		// Reverse without sorting: iterate backwards
+		if reverse && !sorted {
+			for i := itemCount - 1; i >= 0; i-- {
+				itemRV := rv.Index(i)
+				var itemVal any
+				if itemRV.IsValid() {
+					itemVal = itemRV.Interface()
+				}
+				itemV := acquireValue(itemVal, false)
+				continu := fn(itemCount-1-i, itemCount, itemV, nil)
+				releaseValue(itemV)
+				if !continu {
+					return
+				}
+			}
+			return
+		}
+
+		// Slow path: need to build slice for sorting
+		items := make(valuesList, 0, itemCount)
 		for i := 0; i < itemCount; i++ {
 			itemRV := rv.Index(i)
 			var itemVal any
@@ -701,30 +743,20 @@ func (v *Value) IterateOrder(fn func(idx, count int, key, value *Value) bool, em
 			} else {
 				sort.Sort(items)
 			}
-		} else {
-			if reverse {
-				for i := 0; i < itemCount/2; i++ {
-					items[i], items[itemCount-1-i] = items[itemCount-1-i], items[i]
-				}
-			}
 		}
 
-		if len(items) > 0 {
-			for idx, item := range items {
-				if !fn(idx, itemCount, item, nil) {
-					// Return all Values to pool before exiting early
-					for _, v := range items {
-						releaseValue(v)
-					}
-					return
+		for idx, item := range items {
+			if !fn(idx, itemCount, item, nil) {
+				// Return all Values to pool before exiting early
+				for _, v := range items {
+					releaseValue(v)
 				}
+				return
 			}
-			// Return all Values to pool after successful iteration
-			for _, v := range items {
-				releaseValue(v)
-			}
-		} else {
-			empty()
+		}
+		// Return all Values to pool after successful iteration
+		for _, v := range items {
+			releaseValue(v)
 		}
 		return // done
 	default:
