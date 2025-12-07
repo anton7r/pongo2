@@ -6,12 +6,34 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Value struct {
 	val  any
 	safe bool // used to indicate whether a Value needs explicit escaping in the template
+}
+
+var valuePool = sync.Pool{
+	New: func() any {
+		return &Value{}
+	},
+}
+
+// acquireValue gets a Value from the pool
+func acquireValue(val any, safe bool) *Value {
+	v := valuePool.Get().(*Value)
+	v.val = val
+	v.safe = safe
+	return v
+}
+
+// releaseValue returns a Value to the pool
+func releaseValue(v *Value) {
+	v.val = nil
+	v.safe = false
+	valuePool.Put(v)
 }
 
 // AsValue converts any given value to a pongo2.Value
@@ -612,7 +634,10 @@ func (v *Value) IterateOrder(fn func(idx, count int, key, value *Value) bool, em
 			}
 
 			for i := 0; i < charCount; i++ {
-				if !fn(i, charCount, &Value{val: string(rs[i])}, nil) {
+				charV := acquireValue(string(rs[i]), false)
+				continu := fn(i, charCount, charV, nil)
+				releaseValue(charV)
+				if !continu {
 					return
 				}
 			}
@@ -644,7 +669,12 @@ func (v *Value) IterateOrder(fn func(idx, count int, key, value *Value) bool, em
 			if value.IsValid() {
 				valueVal = value.Interface()
 			}
-			if !fn(idx, keyLen, &Value{val: keyVal}, &Value{val: valueVal}) {
+			keyV := acquireValue(keyVal, false)
+			valueV := acquireValue(valueVal, false)
+			continu := fn(idx, keyLen, keyV, valueV)
+			releaseValue(keyV)
+			releaseValue(valueV)
+			if !continu {
 				return
 			}
 		}
@@ -662,7 +692,7 @@ func (v *Value) IterateOrder(fn func(idx, count int, key, value *Value) bool, em
 			if itemRV.IsValid() {
 				itemVal = itemRV.Interface()
 			}
-			items = append(items, &Value{val: itemVal})
+			items = append(items, acquireValue(itemVal, false))
 		}
 
 		if sorted {
@@ -682,8 +712,16 @@ func (v *Value) IterateOrder(fn func(idx, count int, key, value *Value) bool, em
 		if len(items) > 0 {
 			for idx, item := range items {
 				if !fn(idx, itemCount, item, nil) {
+					// Return all Values to pool before exiting early
+					for _, v := range items {
+						releaseValue(v)
+					}
 					return
 				}
+			}
+			// Return all Values to pool after successful iteration
+			for _, v := range items {
+				releaseValue(v)
 			}
 		} else {
 			empty()
