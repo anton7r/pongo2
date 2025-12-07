@@ -320,13 +320,23 @@ func filterTruncatewordsHTML(in *Value, param *Value) (*Value, *Error) {
 	return AsSafeValue(newOutput.String()), nil
 }
 
+var escaper = strings.NewReplacer(
+	"&", "&amp;",
+	">", "&gt;",
+	"<", "&lt;",
+	"\"", "&quot;",
+	"'", "&#39;",
+)
+
 func filterEscape(in *Value, param *Value) (*Value, *Error) {
-	buf := getBuffer()
+	/* buf := getBuffer()
 	defer putBuffer(buf)
 
 	HTMLEscapeString(buf, in.String())
 
-	return AsValue(buf.String()), nil
+	return AsValue(buf.String()), nil */
+
+	return AsValue(escaper.Replace(in.String())), nil
 }
 
 func filterSafe(in *Value, param *Value) (*Value, *Error) {
