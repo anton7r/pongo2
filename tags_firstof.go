@@ -20,7 +20,7 @@ func (node *tagFirstofNode) Execute(ctx *ExecutionContext, writer TemplateWriter
 				}
 			}
 
-			writer.WriteString(val.String())
+			writer.WriteAny(val)
 			return nil
 		}
 	}
