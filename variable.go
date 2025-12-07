@@ -324,7 +324,13 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 					// Calling a field or key
 					switch current.Kind() {
 					case reflect.Struct:
-						current = current.FieldByName(part.s)
+						// Use cached field lookup for better performance
+						if indices, ok := globalStructFieldCache.getFieldIndex(current.Type(), part.s); ok {
+							current = current.FieldByIndex(indices)
+						} else {
+							// Field not found, return invalid value
+							current = reflect.Value{}
+						}
 					case reflect.Map:
 						current = current.MapIndex(reflect.ValueOf(part.s))
 					default:
@@ -353,7 +359,14 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 						if err != nil {
 							return nil, err
 						}
-						current = current.FieldByName(sv.String())
+						fieldName := sv.String()
+						// Use cached field lookup for better performance
+						if indices, ok := globalStructFieldCache.getFieldIndex(current.Type(), fieldName); ok {
+							current = current.FieldByIndex(indices)
+						} else {
+							// Field not found, return invalid value
+							current = reflect.Value{}
+						}
 					case reflect.Map:
 						sv, err := part.subscript.Evaluate(ctx)
 						if err != nil {
