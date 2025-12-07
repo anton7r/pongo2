@@ -242,7 +242,7 @@ func (vr *variableResolver) String() string {
 }
 
 func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
-	var current reflect.Value
+	var current any
 	var isSafe bool
 
 	// we are resolving an in-template array definition
@@ -278,29 +278,46 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 				// Nothing found? Then have a final lookup in the public context
 				val = ctx.Public[vr.parts[0].s]
 			}
-			current = reflect.ValueOf(val) // Get the initial value
+			current = val // Keep as raw any value
 		} else {
 			// Next parts, resolve it from current
+
+			// Handle *Value unwrapping
+			if v, ok := current.(*Value); ok {
+				current = v.val
+				isSafe = v.safe
+			}
+
+			// Check if nil
+			if current == nil {
+				return AsValue(nil), nil
+			}
+
+			// For method calls and complex operations, we need reflect.Value
+			rv := reflect.ValueOf(current)
 
 			// Before resolving the pointer, let's see if we have a method to call
 			// Problem with resolving the pointer is we're changing the receiver
 			isFunc := false
 			if part.typ == varTypeIdent {
-				funcValue := current.MethodByName(part.s)
+				funcValue := rv.MethodByName(part.s)
 				if funcValue.IsValid() {
-					current = funcValue
+					rv = funcValue
 					isFunc = true
+					current = nil // Signal we're using rv
 				}
 			}
 
 			if !isFunc {
 				// If current a pointer, resolve it
-				if current.Kind() == reflect.Ptr {
-					current = current.Elem()
-					if !current.IsValid() {
+				if rv.Kind() == reflect.Ptr {
+					rv = rv.Elem()
+					if !rv.IsValid() {
 						// Value is not valid (anymore)
 						return AsValue(nil), nil
 					}
+					// Update current to the dereferenced value
+					current = rv.Interface()
 				}
 
 				// Look up which part must be called now
@@ -308,47 +325,55 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 				case varTypeInt:
 					// Calling an index is only possible for:
 					// * slices/arrays/strings
-					switch current.Kind() {
+					switch rv.Kind() {
 					case reflect.String, reflect.Array, reflect.Slice:
-						if part.i >= 0 && current.Len() > part.i {
-							current = current.Index(part.i)
+						if part.i >= 0 && rv.Len() > part.i {
+							rv = rv.Index(part.i)
+							current = rv.Interface()
 						} else {
 							// In Django, exceeding the length of a list is just empty.
 							return AsValue(nil), nil
 						}
 					default:
 						return nil, fmt.Errorf("can't access an index on type %s (variable %s)",
-							current.Kind().String(), vr.String())
+							rv.Kind().String(), vr.String())
 					}
 				case varTypeIdent:
 					// Calling a field or key
-					switch current.Kind() {
+					switch rv.Kind() {
 					case reflect.Struct:
 						// Use cached field lookup for better performance
-						if indices, ok := globalStructFieldCache.getFieldIndex(current.Type(), part.s); ok {
-							current = current.FieldByIndex(indices)
+						if indices, ok := globalStructFieldCache.getFieldIndex(rv.Type(), part.s); ok {
+							rv = rv.FieldByIndex(indices)
+							current = rv.Interface()
 						} else {
-							// Field not found, return invalid value
-							current = reflect.Value{}
+							// Field not found
+							return AsValue(nil), nil
 						}
 					case reflect.Map:
-						current = current.MapIndex(reflect.ValueOf(part.s))
+						rv = rv.MapIndex(reflect.ValueOf(part.s))
+						if rv.IsValid() {
+							current = rv.Interface()
+						} else {
+							current = nil
+						}
 					default:
 						return nil, fmt.Errorf("can't access a field by name on type %s (variable %s)",
-							current.Kind().String(), vr.String())
+							rv.Kind().String(), vr.String())
 					}
 				case varTypeSubscript:
 					// Calling an index is only possible for:
 					// * slices/arrays/strings
-					switch current.Kind() {
+					switch rv.Kind() {
 					case reflect.String, reflect.Array, reflect.Slice:
 						sv, err := part.subscript.Evaluate(ctx)
 						if err != nil {
 							return nil, err
 						}
 						si := sv.Integer()
-						if si >= 0 && current.Len() > si {
-							current = current.Index(si)
+						if si >= 0 && rv.Len() > si {
+							rv = rv.Index(si)
+							current = rv.Interface()
 						} else {
 							// In Django, exceeding the length of a list is just empty.
 							return AsValue(nil), nil
@@ -361,11 +386,12 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 						}
 						fieldName := sv.String()
 						// Use cached field lookup for better performance
-						if indices, ok := globalStructFieldCache.getFieldIndex(current.Type(), fieldName); ok {
-							current = current.FieldByIndex(indices)
+						if indices, ok := globalStructFieldCache.getFieldIndex(rv.Type(), fieldName); ok {
+							rv = rv.FieldByIndex(indices)
+							current = rv.Interface()
 						} else {
-							// Field not found, return invalid value
-							current = reflect.Value{}
+							// Field not found
+							return AsValue(nil), nil
 						}
 					case reflect.Map:
 						sv, err := part.subscript.Evaluate(ctx)
@@ -376,50 +402,53 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 							return AsValue(nil), nil
 						}
 						svRV := reflect.ValueOf(sv.val)
-						if svRV.IsValid() && svRV.Type().AssignableTo(current.Type().Key()) {
-							current = current.MapIndex(svRV)
+						if svRV.IsValid() && svRV.Type().AssignableTo(rv.Type().Key()) {
+							rv = rv.MapIndex(svRV)
+							if rv.IsValid() {
+								current = rv.Interface()
+							} else {
+								current = nil
+							}
 						} else {
 							return AsValue(nil), nil
 						}
 					default:
 						return nil, fmt.Errorf("can't access an index on type %s (variable %s)",
-							current.Kind().String(), vr.String())
+							rv.Kind().String(), vr.String())
 					}
 				default:
 					panic("unimplemented")
 				}
+			} else {
+				// We have a function from method lookup, keep using rv
+				current = nil
+			}
+
+			// If we're using rv (for function calls), ensure current is nil
+			// Otherwise current has the value
+			if current == nil && rv.IsValid() {
+				// We need rv for next iteration or function call
+				// Store back as reflect value operation
+				current = rv
 			}
 		}
 
-		if !current.IsValid() {
-			// Value is not valid (anymore)
+		// Check for nil or invalid
+		if current == nil {
 			return AsValue(nil), nil
 		}
 
-		// If current is a reflect.ValueOf(pongo2.Value), then unpack it
-		// Happens in function calls (as a return value) or by injecting
-		// into the execution context (e.g. in a for-loop)
-		if current.Type() == typeOfValuePtr {
-			tmpValue := current.Interface().(*Value)
-			current = reflect.ValueOf(tmpValue.val)
-			isSafe = tmpValue.safe
-		}
-
-		// Check whether this is an interface and resolve it where required
-		if current.Kind() == reflect.Interface {
-			current = reflect.ValueOf(current.Interface())
-		}
-
 		// Check if the part is a function call
-		if part.isFunctionCall || current.Kind() == reflect.Func {
+		rv := reflect.ValueOf(current)
+		if part.isFunctionCall || rv.Kind() == reflect.Func {
 			// Check for callable
-			if current.Kind() != reflect.Func {
-				return nil, fmt.Errorf("'%s' is not a function (it is %s)", vr.String(), current.Kind().String())
+			if rv.Kind() != reflect.Func {
+				return nil, fmt.Errorf("'%s' is not a function (it is %s)", vr.String(), rv.Kind().String())
 			}
 
 			// Check for correct function syntax and types
 			// func(*Value, ...) *Value
-			t := current.Type()
+			t := rv.Type()
 			currArgs := part.callingArgs
 
 			// If an implicit ExecCtx is needed
@@ -497,8 +526,8 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 			}
 
 			// Call it and get first return parameter back
-			values := current.Call(parameters)
-			rv := values[0]
+			values := rv.Call(parameters)
+			retVal := values[0]
 			if t.NumOut() == 2 {
 				e := values[1].Interface()
 				if e != nil {
@@ -512,26 +541,21 @@ func (vr *variableResolver) resolve(ctx *ExecutionContext) (*Value, error) {
 				}
 			}
 
-			if rv.Type() != typeOfValuePtr {
-				current = reflect.ValueOf(rv.Interface())
+			if retVal.Type() != typeOfValuePtr {
+				current = retVal.Interface()
 			} else {
 				// Return the function call value
-				valuePtr := rv.Interface().(*Value)
-				current = reflect.ValueOf(valuePtr.val)
+				valuePtr := retVal.Interface().(*Value)
+				current = valuePtr.val
 				isSafe = valuePtr.safe
 			}
 		}
-
-		if !current.IsValid() {
-			// Value is not valid (e. g. NIL value)
-			return AsValue(nil), nil
-		}
 	}
 
-	if !current.IsValid() {
+	if current == nil {
 		return AsValue(nil), nil
 	}
-	return &Value{val: current.Interface(), safe: isSafe}, nil
+	return &Value{val: current, safe: isSafe}, nil
 }
 
 func (vr *variableResolver) Evaluate(ctx *ExecutionContext) (*Value, *Error) {
