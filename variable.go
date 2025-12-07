@@ -214,10 +214,8 @@ func (nv *nodeVariable) Execute(ctx *ExecutionContext, writer TemplateWriter) *E
 
 	if !nv.expr.FilterApplied("safe") && !value.safe && value.IsString() && ctx.Autoescape {
 		// apply escape filter
-		value, err = filters["escape"](value, nil)
-		if err != nil {
-			return err
-		}
+		escapeReplacer.WriteString(writer, value.String())
+		return nil
 	}
 
 	writer.WriteAny(value)
