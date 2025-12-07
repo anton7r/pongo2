@@ -320,12 +320,7 @@ func filterTruncatewordsHTML(in *Value, param *Value) (*Value, *Error) {
 }
 
 func filterEscape(in *Value, param *Value) (*Value, *Error) {
-	output := strings.Replace(in.String(), "&", "&amp;", -1)
-	output = strings.Replace(output, ">", "&gt;", -1)
-	output = strings.Replace(output, "<", "&lt;", -1)
-	output = strings.Replace(output, "\"", "&quot;", -1)
-	output = strings.Replace(output, "'", "&#39;", -1)
-	return AsValue(output), nil
+	return AsValue(escapeReplacer.Replace(in.String())), nil
 }
 
 func filterSafe(in *Value, param *Value) (*Value, *Error) {
